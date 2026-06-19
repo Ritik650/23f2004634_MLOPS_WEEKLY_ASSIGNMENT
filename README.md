@@ -1,59 +1,47 @@
-# IRIS ML Pipeline on Vertex AI — MLOps Week 1
+# IRIS Pipeline with DVC — MLOps Week 2
 
-End-to-end IRIS classification pipeline on Google Cloud. Data and artifacts are
-managed in Google Cloud Storage (GCS); training and inference are separate,
-reproducible scripts. Output artifacts are organized by execution timestamp.
+Data Version Control (DVC) layered on top of the Week 1 IRIS pipeline. Code and
+lightweight `.dvc` pointer files live in Git; the actual dataset and model
+artifacts are versioned in a Google Cloud Storage **DVC remote**. This makes the
+pipeline fully reproducible and lets you time-travel between data/model versions.
 
-**Roll number:** 23f2004634 · **Branch:** `week_1` · **Term:** MAY 2026
+**Roll No:** 23f2004634 · **Branch:** `week_2` · **Term:** MAY 2026
+**DVC remote:** `gs://23f2004634-mlops-week1/dvcstore`
 
 ## Files
 
 | File | Utility |
 |------|---------|
-| `config.py` | Central config (project, location, bucket, feature/target columns). Reads env vars `PROJECT_ID`, `LOCATION`, `BUCKET`. |
-| `gcs_utils.py` | Helper wrappers over `google-cloud-storage` for upload/download/list. |
-| `data_prep.py` | **Task 2** — stratified train/eval split of the IRIS data, uploaded to `gs://<bucket>/data/<version>/`. |
-| `train.py` | **Task 3** — fetches train data from GCS, trains a DecisionTree, stores `model.joblib`, `metrics.json`, `metadata.json`, `training.log` in a timestamped folder `gs://<bucket>/artifacts/<version>/<timestamp>/`. |
-| `inference.py` | **Task 4** — fetches a trained model from GCS (latest run by default) and runs inference on the eval set; writes `predictions.csv` and `eval_metrics.json` under the same run folder. |
-| `requirements.txt` | Python dependencies. |
+| `train_dvc.py` | Trains a DecisionTree on the DVC-tracked `data/iris.csv`; writes `model.joblib` and appends a row to `metrics.csv`. |
+| `augment_data.py` | Simulates a data addition — appends noisy resampled rows to `data/iris.csv` to create the next iteration. |
+| `metrics.csv` | Accumulated metric history across iterations (rows, train/eval accuracy). Plain-text output, tracked in Git. |
+| `data/iris.csv.dvc` | DVC pointer to the dataset (the real CSV lives in the GCS remote, not Git). |
+| `model.joblib.dvc` | DVC pointer to the trained model (the real binary lives in the GCS remote). |
+| `.dvc/config` | DVC configuration incl. the default GCS remote. |
+| `.dvcignore`, `.gitignore` | Ensure the real data/model bytes stay out of Git. |
+| *(Week 1 files)* | `train.py`, `inference.py`, `data_prep.py`, `gcs_utils.py`, `config.py`, `pipeline.ipynb` carried over. |
 
-## GCS layout
+## Version history
 
-```
-gs://<bucket>/
-├── data/<version>/{train.csv, eval.csv}
-└── artifacts/<version>/<YYYY-MM-DDTHH-MM-SS>/
-    ├── model.joblib
-    ├── metrics.json
-    ├── metadata.json
-    ├── training.log
-    └── inference/{predictions.csv, eval_metrics.json}
-```
+| Tag | Data | Notes |
+|-----|------|-------|
+| `v1.0` | base IRIS (150 rows) | first iteration |
+| `v2.0` | augmented (~195 rows) | data addition simulated via `augment_data.py` |
 
-## Run
+## Reproduce
 
 ```bash
-export PROJECT_ID=project-a0a1f4bf-9c68-4b93-a84
-export BUCKET=23f2004634-mlops-week1
-pip install -r requirements.txt
+pip install "dvc[gs]"
+dvc pull                 # fetch data + model from the GCS remote
+python train_dvc.py      # retrain from the pulled data
 
-# Task 2 — upload data
-python data_prep.py --src ga_resources/data/raw/iris.csv --version raw
-
-# Task 3 + 4 — one full pass
-python train.py --version raw
-python inference.py --version raw
-
-# Task 5 — run twice (second timestamped folder)
-python train.py --version raw && python inference.py --version raw
-
-# Task 6 (optional) — compare data versions
-python data_prep.py --src ga_resources/data/v1/data.csv --version v1
-python train.py --version v1 && python inference.py --version v1
-python data_prep.py --src ga_resources/data/v2/data.csv --version v2
-python train.py --version v2 && python inference.py --version v2
+# time-travel to a previous version
+git checkout v1.0 && dvc checkout    # data/iris.csv + model.joblib revert
+git checkout v2.0 && dvc checkout    # back to latest
 ```
 
-## Notes
-- Models, data splits, and the video screencast are **not** committed (see `.gitignore`); they live in GCS.
-- Each training run produces an independent timestamped folder for traceability.
+## Why no binaries in Git
+`dvc add` records each file's content hash in a tiny `.dvc` pointer and adds the
+real file to `.gitignore`. The bytes are pushed to the GCS remote with `dvc push`.
+So the repo stays clean — no model binaries, no dataset bytes — while remaining
+fully reproducible.
