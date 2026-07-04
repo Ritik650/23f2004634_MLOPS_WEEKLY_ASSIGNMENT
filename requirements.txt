@@ -1,4 +1,5 @@
-google-cloud-storage
+dvc[gs]
 scikit-learn
 pandas
 joblib
+pytest
