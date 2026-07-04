@@ -33,7 +33,7 @@ jobs:
       - name: Run tests
         run: pytest -v tests/ | tee pytest_output.txt
       - name: CML report
-        if: always()
+        if: github.event_name == 'pull_request'
         env:
           REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
