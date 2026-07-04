@@ -1,47 +1,49 @@
-# IRIS Pipeline with DVC — MLOps Week 2
+# IRIS Pipeline with CI (GitHub Actions) — MLOps Week 4
 
-Data Version Control (DVC) layered on top of the Week 1 IRIS pipeline. Code and
-lightweight `.dvc` pointer files live in Git; the actual dataset and model
-artifacts are versioned in a Google Cloud Storage **DVC remote**. This makes the
-pipeline fully reproducible and lets you time-travel between data/model versions.
+Continuous Integration for the IRIS pipeline. On every push and pull request,
+GitHub Actions pulls the DVC-versioned data and model from the GCS remote, runs
+data-validation and model-evaluation tests with pytest, and posts a CML report
+as a comment.
 
-**Roll No:** 23f2004634 · **Branch:** `week_2` · **Term:** MAY 2026
-**DVC remote:** `gs://23f2004634-mlops-week1/dvcstore`
+**Roll No:** 23f2004634 · **Branch:** `week_4` · **Term:** MAY 2026
 
 ## Files
 
 | File | Utility |
 |------|---------|
-| `train_dvc.py` | Trains a DecisionTree on the DVC-tracked `data/iris.csv`; writes `model.joblib` and appends a row to `metrics.csv`. |
-| `augment_data.py` | Simulates a data addition — appends noisy resampled rows to `data/iris.csv` to create the next iteration. |
-| `metrics.csv` | Accumulated metric history across iterations (rows, train/eval accuracy). Plain-text output, tracked in Git. |
-| `data/iris.csv.dvc` | DVC pointer to the dataset (the real CSV lives in the GCS remote, not Git). |
-| `model.joblib.dvc` | DVC pointer to the trained model (the real binary lives in the GCS remote). |
-| `.dvc/config` | DVC configuration incl. the default GCS remote. |
-| `.dvcignore`, `.gitignore` | Ensure the real data/model bytes stay out of Git. |
-| *(Week 1 files)* | `train.py`, `inference.py`, `data_prep.py`, `gcs_utils.py`, `config.py`, `pipeline.ipynb` carried over. |
+| `tests/test_data.py` | **Task 1** — validates `data/iris.csv`: schema, missing values, feature types, value ranges, valid labels. |
+| `tests/test_model.py` | **Task 2** — loads `model.joblib`, rebuilds the held-out eval split, asserts accuracy & precision meet minimum thresholds. |
+| `.github/workflows/ci.yml` | **Tasks 3–5** — CI workflow: checkout → install → GCS auth → `dvc pull` → `pytest` → CML PR comment. Runs on every push and PR. |
+| `requirements.txt` | CI dependencies. |
+| *(carried from Week 2)* | `.dvc/config`, `data/iris.csv.dvc`, `model.joblib.dvc`, `train_dvc.py`, etc. — the DVC pipeline the tests validate. |
 
-## Version history
+## How CI works
 
-| Tag | Data | Notes |
-|-----|------|-------|
-| `v1.0` | base IRIS (150 rows) | first iteration |
-| `v2.0` | augmented (~195 rows) | data addition simulated via `augment_data.py` |
+1. GitHub Actions triggers on push / PR (any branch).
+2. It authenticates to GCS using the `GCP_SA_KEY` repository secret.
+3. `dvc pull` fetches `data/iris.csv` and `model.joblib` from the DVC remote
+   (`gs://23f2004634-mlops-week1/dvcstore`).
+4. `pytest` runs the data + model test suite (10 tests).
+5. CML posts the results as a comment on the commit / pull request.
 
-## Reproduce
+## Required repository secret
 
+`GCP_SA_KEY` — a GCP service-account JSON key with **Storage Object Viewer** on
+the DVC bucket. Created via:
 ```bash
-pip install "dvc[gs]"
-dvc pull                 # fetch data + model from the GCS remote
-python train_dvc.py      # retrain from the pulled data
-
-# time-travel to a previous version
-git checkout v1.0 && dvc checkout    # data/iris.csv + model.joblib revert
-git checkout v2.0 && dvc checkout    # back to latest
+gcloud iam service-accounts create dvc-ci --display-name="DVC CI"
+gcloud projects add-iam-policy-binding <PROJECT_ID> \
+  --member="serviceAccount:dvc-ci@<PROJECT_ID>.iam.gserviceaccount.com" \
+  --role="roles/storage.objectViewer"
+gcloud iam service-accounts keys create key.json \
+  --iam-account=dvc-ci@<PROJECT_ID>.iam.gserviceaccount.com
 ```
+Paste the contents of `key.json` into GitHub → repo Settings → Secrets and
+variables → Actions → New repository secret → name `GCP_SA_KEY`. **Never commit
+this key.**
 
-## Why no binaries in Git
-`dvc add` records each file's content hash in a tiny `.dvc` pointer and adds the
-real file to `.gitignore`. The bytes are pushed to the GCS remote with `dvc push`.
-So the repo stays clean — no model binaries, no dataset bytes — while remaining
-fully reproducible.
+## Run tests locally
+```bash
+dvc pull
+pytest -v tests/
+```
