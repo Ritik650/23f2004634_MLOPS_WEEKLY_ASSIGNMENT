@@ -1,59 +1,56 @@
-# IRIS ML Pipeline on Vertex AI — MLOps Week 1
+# IRIS Pipeline with Feast Feature Store — MLOps Week 3
 
-End-to-end IRIS classification pipeline on Google Cloud. Data and artifacts are
-managed in Google Cloud Storage (GCS); training and inference are separate,
-reproducible scripts. Output artifacts are organized by execution timestamp.
+A Feast feature store layered onto the IRIS pipeline so that **training and
+inference pull features from one shared source** — eliminating training/serving
+skew. Training reads from the offline store; inference reads from the online
+store; both come from the same feature definitions.
 
-**Roll number:** 23f2004634 · **Branch:** `week_1` · **Term:** MAY 2026
+**Roll No:** 23f2004634 · **Branch:** `week_3` · **Term:** MAY 2026
 
 ## Files
 
 | File | Utility |
 |------|---------|
-| `config.py` | Central config (project, location, bucket, feature/target columns). Reads env vars `PROJECT_ID`, `LOCATION`, `BUCKET`. |
-| `gcs_utils.py` | Helper wrappers over `google-cloud-storage` for upload/download/list. |
-| `data_prep.py` | **Task 2** — stratified train/eval split of the IRIS data, uploaded to `gs://<bucket>/data/<version>/`. |
-| `train.py` | **Task 3** — fetches train data from GCS, trains a DecisionTree, stores `model.joblib`, `metrics.json`, `metadata.json`, `training.log` in a timestamped folder `gs://<bucket>/artifacts/<version>/<timestamp>/`. |
-| `inference.py` | **Task 4** — fetches a trained model from GCS (latest run by default) and runs inference on the eval set; writes `predictions.csv` and `eval_metrics.json` under the same run folder. |
-| `requirements.txt` | Python dependencies. |
+| `feature_repo/feature_store.yaml` | Feast config — local provider, SQLite registry + online store. |
+| `feature_repo/iris_repo.py` | **Task 2** — defines the `iris_id` entity, the `FileSource`, and the `iris_features` feature view. |
+| `feature_repo/data/iris_data_adapted_for_feast.csv` | Provided time-series IRIS dataset (entity `iris_id`, `event_timestamp`). |
+| `prepare_data.py` | Converts the CSV to `data/iris.parquet` (the format the FileSource reads). Run before `feast apply`. |
+| `train_feast.py` | **Task 4** — pulls historical features from the **offline store** via `get_historical_features()` and trains the model. |
+| `inference_feast.py` | **Task 5** — pulls latest features from the **online store** via `get_online_features()` for given `iris_id`s and predicts; writes `predictions.csv`. |
+| `predictions.csv` | Output — online-served features + predictions, with a consistency check vs. the known species. |
 
-## GCS layout
+## The dataset
 
-```
-gs://<bucket>/
-├── data/<version>/{train.csv, eval.csv}
-└── artifacts/<version>/<YYYY-MM-DDTHH-MM-SS>/
-    ├── model.joblib
-    ├── metrics.json
-    ├── metadata.json
-    ├── training.log
-    └── inference/{predictions.csv, eval_metrics.json}
-```
+The adapted IRIS set tracks **3 plants** (`iris_id` 1001–1003) over **15 days**
+each (45 rows), with an `event_timestamp` per measurement so Feast can do
+point-in-time joins. Note these 3 plants span only 2 species
+(1001 = versicolor, 1002/1003 = setosa), so the trained model is a
+**demonstration of the Feast retrieval mechanism**, not a meaningful 3-class
+classifier.
 
-## Run
+## Run order
 
 ```bash
-export PROJECT_ID=project-a0a1f4bf-9c68-4b93-a84
-export BUCKET=23f2004634-mlops-week1
-pip install -r requirements.txt
-
-# Task 2 — upload data
-python data_prep.py --src ga_resources/data/raw/iris.csv --version raw
-
-# Task 3 + 4 — one full pass
-python train.py --version raw
-python inference.py --version raw
-
-# Task 5 — run twice (second timestamped folder)
-python train.py --version raw && python inference.py --version raw
-
-# Task 6 (optional) — compare data versions
-python data_prep.py --src ga_resources/data/v1/data.csv --version v1
-python train.py --version v1 && python inference.py --version v1
-python data_prep.py --src ga_resources/data/v2/data.csv --version v2
-python train.py --version v2 && python inference.py --version v2
+pip install feast
+python prepare_data.py                 # CSV -> parquet
+cd feature_repo
+feast apply                            # Task 1 + 2: register entity/source/feature view
+feast materialize 2025-09-01T00:00:00 2025-10-05T00:00:00   # Task 3: offline -> online
+cd ..
+python train_feast.py                  # Task 4: train from OFFLINE store
+python inference_feast.py              # Task 5: serve from ONLINE store
 ```
 
-## Notes
-- Models, data splits, and the video screencast are **not** committed (see `.gitignore`); they live in GCS.
-- Each training run produces an independent timestamped folder for traceability.
+## Offline vs. online
+
+- **Offline store** (`get_historical_features`) — batch/historical retrieval for
+  training, point-in-time correct.
+- **Online store** (`get_online_features`) — low-latency lookup of the latest
+  materialized feature values, for real-time inference.
+- **Materialization** moves values from offline → online so they're servable.
+
+## What's not in Git
+The Feast execution artifacts — `data/registry.db`, `data/online_store.db`,
+`data/iris.parquet`, and `model.joblib` — are regenerable outputs and are
+git-ignored. Run the commands above to reproduce them from the committed source
+CSV and feature definitions.

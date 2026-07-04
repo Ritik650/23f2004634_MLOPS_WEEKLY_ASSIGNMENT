@@ -1,4 +1,0 @@
-google-cloud-storage
-scikit-learn
-pandas
-joblib

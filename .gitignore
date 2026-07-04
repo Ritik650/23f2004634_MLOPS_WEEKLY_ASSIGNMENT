@@ -1,0 +1,39 @@
+# ===== Feast execution artifacts (regenerable, kept out of Git) =====
+feature_repo/data/registry.db
+feature_repo/data/online_store.db
+feature_repo/data/*.parquet
+feature_repo/.ipynb_checkpoints/
+
+# ===== model + binary outputs (regenerable) =====
+*.joblib
+*.pkl
+*.pickle
+
+# ===== python =====
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# ===== home-directory / system junk (repo is rooted in $HOME) =====
+.cache/
+.config/
+.docker/
+.gemini/
+.gsutil/
+.ipython/
+.jupyter/
+.local/
+.npm/
+.bash_history
+.gitconfig
+.git-credentials
+.lastactive
+.lesshst
+ga_resources/
+
+# ===== video screencast (lives on Drive) =====
+*.mp4
+*.mov
+*.avi
+*.wmv
+*.mkv
