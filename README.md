@@ -1,47 +1,62 @@
-# IRIS Pipeline with DVC — MLOps Week 2
+# IRIS Pipeline with MLflow — MLOps Week 5
 
-Data Version Control (DVC) layered on top of the Week 1 IRIS pipeline. Code and
-lightweight `.dvc` pointer files live in Git; the actual dataset and model
-artifacts are versioned in a Google Cloud Storage **DVC remote**. This makes the
-pipeline fully reproducible and lets you time-travel between data/model versions.
+Experiment tracking and a model registry for the IRIS pipeline using MLflow.
+Hyperparameter tuning runs are logged with their parameters, metrics, and model
+artifacts; the best model is registered in the MLflow Model Registry, and the
+evaluation pipeline loads the model **from the registry** instead of DVC.
 
-**Roll No:** 23f2004634 · **Branch:** `week_2` · **Term:** MAY 2026
-**DVC remote:** `gs://23f2004634-mlops-week1/dvcstore`
+**Roll No:** 23f2004634 · **Branch:** `week_5` · **Term:** MAY 2026
 
 ## Files
 
 | File | Utility |
 |------|---------|
-| `train_dvc.py` | Trains a DecisionTree on the DVC-tracked `data/iris.csv`; writes `model.joblib` and appends a row to `metrics.csv`. |
-| `augment_data.py` | Simulates a data addition — appends noisy resampled rows to `data/iris.csv` to create the next iteration. |
-| `metrics.csv` | Accumulated metric history across iterations (rows, train/eval accuracy). Plain-text output, tracked in Git. |
-| `data/iris.csv.dvc` | DVC pointer to the dataset (the real CSV lives in the GCS remote, not Git). |
-| `model.joblib.dvc` | DVC pointer to the trained model (the real binary lives in the GCS remote). |
-| `.dvc/config` | DVC configuration incl. the default GCS remote. |
-| `.dvcignore`, `.gitignore` | Ensure the real data/model bytes stay out of Git. |
-| *(Week 1 files)* | `train.py`, `inference.py`, `data_prep.py`, `gcs_utils.py`, `config.py`, `pipeline.ipynb` carried over. |
+| `train_mlflow.py` | **Tasks 1 & 2** — hyperparameter tuning over `max_depth` × `criterion` (5 configurations). Each run logs params, metrics (accuracy/precision/recall/f1) and the model to MLflow; the best run is registered as `iris_classifier`. |
+| `evaluate_mlflow.py` | **Task 5** — loads the model from the MLflow Model Registry by name + version (`models:/iris_classifier/<v>`) and evaluates it. Writes `evaluation_predictions.csv`. |
+| `evaluation_predictions.csv` | Output — eval rows with the registry model's predictions. |
+| `data/iris.csv.dvc` | DVC pointer — **data only**. Model tracking was removed from DVC (Task 4). |
 
-## Version history
+## Task 4 — model removed from DVC
 
-| Tag | Data | Notes |
-|-----|------|-------|
-| `v1.0` | base IRIS (150 rows) | first iteration |
-| `v2.0` | augmented (~195 rows) | data addition simulated via `augment_data.py` |
-
-## Reproduce
+Models are no longer versioned by DVC. `model.joblib.dvc` was deleted and
+`model.joblib` added to `.gitignore`; DVC now tracks **data files only**, while
+model versioning is handled entirely by the MLflow Model Registry.
 
 ```bash
-pip install "dvc[gs]"
-dvc pull                 # fetch data + model from the GCS remote
-python train_dvc.py      # retrain from the pulled data
-
-# time-travel to a previous version
-git checkout v1.0 && dvc checkout    # data/iris.csv + model.joblib revert
-git checkout v2.0 && dvc checkout    # back to latest
+dvc remove model.joblib.dvc
+git rm model.joblib.dvc
 ```
 
-## Why no binaries in Git
-`dvc add` records each file's content hash in a tiny `.dvc` pointer and adds the
-real file to `.gitignore`. The bytes are pushed to the GCS remote with `dvc push`.
-So the repo stays clean — no model binaries, no dataset bytes — while remaining
-fully reproducible.
+## Run
+
+```bash
+pip install mlflow scikit-learn pandas
+
+# Tasks 1 + 2 -- tuning runs, logged to MLflow, best model registered
+python train_mlflow.py
+
+# Task 3 -- compare experiments in the UI (http://localhost:5000)
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+
+# Task 5 -- evaluate using the model fetched from the registry
+python evaluate_mlflow.py            # latest version
+python evaluate_mlflow.py --version 1
+```
+
+## Results (5 tuning runs)
+
+| Run | max_depth | criterion | accuracy |
+|-----|-----------|-----------|----------|
+| depth2_gini | 2 | gini | 0.8644 |
+| depth3_gini | 3 | gini | 0.9831 |
+| depth5_gini | 5 | gini | 0.9831 |
+| depth3_entropy | 3 | entropy | 0.9831 |
+| depth5_entropy | 5 | entropy | 0.9831 |
+
+The `max_depth=2` run underfits noticeably; the deeper configurations all reach
+~0.98. The best run is registered as `iris_classifier` v1.
+
+## Why MLflow alongside DVC
+DVC answers *"which data version produced this?"*; MLflow answers *"which
+parameters produced which metrics, and which model should be served?"* Together
+they cover data lineage and experiment lineage.
