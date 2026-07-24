@@ -1,44 +1,13 @@
-# ===== home-directory / system junk (repo was init'd in $HOME) =====
-.cache/
-.config/
-.docker/
-.gemini/
-.gsutil/
-.ipython/
-.jupyter/
-.local/
-.npm/
-.bash_history
-.bash_logout
-.bashrc
-.profile
-.gitconfig
-.git-credentials
-.lastactive
-.sudo_as_admin_successful
-.wget-hsts
-
-# ===== python =====
-__pycache__/
-*.pyc
-.ipynb_checkpoints/
-
-# ===== starter data repo (not part of submission) =====
-ga_resources/
-
-# ===== DVC-managed binaries / data (pushed to GCS remote, not Git) =====
-# NOTE: DVC also writes its own ignore entries; these are belt-and-suspenders.
-*.joblib
+# model — pulled via DVC at build time, not committed
+model.joblib
 *.pkl
 *.pickle
-*.h5
 
-# ===== Week 1 GCS workflow leftovers =====
-artifacts/
+# python
+__pycache__/
+*.pyc
 
-# ===== video screencast (lives on Drive) =====
+# video
 *.mp4
 *.mov
-*.avi
-*.wmv
 *.mkv

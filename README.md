@@ -1,47 +1,90 @@
-# IRIS Pipeline with DVC — MLOps Week 2
+# IRIS Pipeline — Continuous Deployment (Docker + GKE) — Week 6
 
-Data Version Control (DVC) layered on top of the Week 1 IRIS pipeline. Code and
-lightweight `.dvc` pointer files live in Git; the actual dataset and model
-artifacts are versioned in a Google Cloud Storage **DVC remote**. This makes the
-pipeline fully reproducible and lets you time-travel between data/model versions.
+Containerizes the IRIS inference API with Docker, pushes the image to Google
+Artifact Registry, and deploys it to Google Kubernetes Engine — fully automated
+via GitHub Actions on every push to `week_6`.
 
-**Roll No:** 23f2004634 · **Branch:** `week_2` · **Term:** MAY 2026
-**DVC remote:** `gs://23f2004634-mlops-week1/dvcstore`
+**Roll No:** 23f2004634 · **Branch:** `week_6` · **Term:** MAY 2026
 
 ## Files
 
 | File | Utility |
 |------|---------|
-| `train_dvc.py` | Trains a DecisionTree on the DVC-tracked `data/iris.csv`; writes `model.joblib` and appends a row to `metrics.csv`. |
-| `augment_data.py` | Simulates a data addition — appends noisy resampled rows to `data/iris.csv` to create the next iteration. |
-| `metrics.csv` | Accumulated metric history across iterations (rows, train/eval accuracy). Plain-text output, tracked in Git. |
-| `data/iris.csv.dvc` | DVC pointer to the dataset (the real CSV lives in the GCS remote, not Git). |
-| `model.joblib.dvc` | DVC pointer to the trained model (the real binary lives in the GCS remote). |
-| `.dvc/config` | DVC configuration incl. the default GCS remote. |
-| `.dvcignore`, `.gitignore` | Ensure the real data/model bytes stay out of Git. |
-| *(Week 1 files)* | `train.py`, `inference.py`, `data_prep.py`, `gcs_utils.py`, `config.py`, `pipeline.ipynb` carried over. |
+| `iris_fastapi.py` | FastAPI inference API — `GET /` health check, `POST /predict/` returns the predicted species. Loads `model.joblib`. |
+| `requirements.txt` | API dependencies (fastapi, uvicorn, scikit-learn, joblib, numpy, pandas). |
+| `Dockerfile` | **Task 2** — packages the API + model into a container on `python:3.10-slim`, exposes port 8200, runs uvicorn. |
+| `.github/workflows/cd.yml` | **Tasks 4 & 5** — CD workflow: WIF auth → `dvc pull` model → docker build → push to Artifact Registry → deploy to GKE. |
+| `k8s/deployment.yaml` | Kubernetes Deployment — 1 replica of the API container on port 8200. |
+| `k8s/service.yaml` | Kubernetes Service (LoadBalancer) — exposes port 80 → 8200 with an external IP. |
 
-## Version history
+## Architecture
 
-| Tag | Data | Notes |
-|-----|------|-------|
-| `v1.0` | base IRIS (150 rows) | first iteration |
-| `v2.0` | augmented (~195 rows) | data addition simulated via `augment_data.py` |
-
-## Reproduce
-
-```bash
-pip install "dvc[gs]"
-dvc pull                 # fetch data + model from the GCS remote
-python train_dvc.py      # retrain from the pulled data
-
-# time-travel to a previous version
-git checkout v1.0 && dvc checkout    # data/iris.csv + model.joblib revert
-git checkout v2.0 && dvc checkout    # back to latest
+```
+push to week_6
+  └─ GitHub Actions (cd.yml)
+       ├─ auth to GCP (Workload Identity Federation, keyless)
+       ├─ dvc pull model.joblib   (from Week 2 GCS remote)
+       ├─ docker build            (API + model)
+       ├─ push → Artifact Registry (us-central1-docker.pkg.dev/.../iris-repo/iris-api)
+       └─ deploy → GKE            (kubectl apply → Deployment + LoadBalancer Service)
+                                     └─ live API on the Service's external IP
 ```
 
-## Why no binaries in Git
-`dvc add` records each file's content hash in a tiny `.dvc` pointer and adds the
-real file to `.gitignore`. The bytes are pushed to the GCS remote with `dvc push`.
-So the repo stays clean — no model binaries, no dataset bytes — while remaining
-fully reproducible.
+## Pod vs Container (Task 1 — explained in the screencast)
+
+- A **Docker container** is a single packaged process — the app plus its
+  dependencies and runtime, isolated from the host.
+- A **Kubernetes Pod** is the smallest deployable unit in Kubernetes and wraps
+  one or more containers that share a network namespace (same IP/port space) and
+  storage volumes.
+- Kubernetes never schedules a bare container — it always schedules a Pod.
+  Deploying via Pods lets Kubernetes add orchestration (scheduling, restarts,
+  scaling, sidecars, shared networking) that a lone container has no concept of.
+  Here, one Pod runs the single `iris-api` container.
+
+## One-time GCP setup (Task 3)
+
+```bash
+# enable APIs
+gcloud services enable artifactregistry.googleapis.com container.googleapis.com
+
+# Artifact Registry repo
+gcloud artifacts repositories create iris-repo \
+  --repository-format=docker --location=us-central1
+
+# grant the existing WIF service account the CD roles
+PROJECT_ID=$(gcloud config get-value project)
+for ROLE in roles/artifactregistry.writer roles/container.developer; do
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:dvc-ci@$PROJECT_ID.iam.gserviceaccount.com" \
+    --role="$ROLE"
+done
+
+# GKE cluster (small/zonal to conserve credits)
+gcloud container clusters create iris-cluster \
+  --zone us-central1-a --num-nodes 1 --machine-type e2-small
+```
+
+Auth uses the same keyless Workload Identity Federation set up in Week 4 — no
+downloadable service-account key (which the trial org policy blocks).
+
+## Verify the deployment
+
+```bash
+kubectl get pods
+kubectl get service iris-api-service     # note the EXTERNAL-IP
+curl -X POST "http://<EXTERNAL-IP>/predict/" \
+  -H "Content-Type: application/json" \
+  -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}'
+# -> {"predicted_class":"setosa"}
+```
+
+## Local Docker test (optional)
+
+```bash
+dvc pull model.joblib.dvc
+docker build -t iris-api .
+docker run -d -p 8200:8200 iris-api
+curl -X POST "http://localhost:8200/predict/" -H "Content-Type: application/json" \
+  -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}'
+```
