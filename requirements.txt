@@ -1,6 +1,6 @@
 fastapi
-uvicorn
-scikit-learn==1.3.2
-joblib
-numpy<2
-pandas
+uvicorn[standard]
+pydantic
+
+# Exporter for Google Cloud
+opentelemetry-exporter-gcp-trace

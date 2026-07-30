@@ -1,19 +1,17 @@
-# 1. Official slim Python base image
-FROM python:3.10-slim
+# 1. Use official Python base image
+FROM python:3.11-slim
 
-# 2. Working directory inside the container
+# 2. Set working directory
 WORKDIR /app
 
-# 3. Install dependencies first (better layer caching)
-COPY requirements.txt .
+# 3. Copy files
+COPY . /app
+
+# 4. Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 4. Copy the API code and the trained model
-COPY iris_fastapi.py .
-COPY model.joblib .
-
-# 5. Expose the serving port
+# 5. Expose port
 EXPOSE 8200
 
-# 6. Run the API
-CMD ["uvicorn", "iris_fastapi:app", "--host", "0.0.0.0", "--port", "8200"]
+# 6. Command to run the server
+CMD ["uvicorn", "demo_log:app", "--host", "0.0.0.0", "--port", "8200"]

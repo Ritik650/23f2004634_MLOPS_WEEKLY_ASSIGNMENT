@@ -1,13 +1,5 @@
-# model — pulled via DVC at build time, not committed
-model.joblib
-*.pkl
-*.pickle
-
-# python
 __pycache__/
 *.pyc
-
-# video
 *.mp4
 *.mov
 *.mkv

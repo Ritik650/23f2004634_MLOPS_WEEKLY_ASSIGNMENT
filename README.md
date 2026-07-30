@@ -1,90 +1,95 @@
-# IRIS Pipeline — Continuous Deployment (Docker + GKE) — Week 6
+# IRIS Pipeline — Observability on GKE (Logging, Tracing, Monitoring) — Week 7
 
-Containerizes the IRIS inference API with Docker, pushes the image to Google
-Artifact Registry, and deploys it to Google Kubernetes Engine — fully automated
-via GitHub Actions on every push to `week_6`.
+A FastAPI ML service instrumented for production observability: structured JSON
+logging, distributed tracing to Google Cloud Trace, Kubernetes health probes,
+and horizontal pod autoscaling — deployed on GKE with Workload Identity.
 
-**Roll No:** 23f2004634 · **Branch:** `week_6` · **Term:** MAY 2026
+**Roll No:** 23f2004634 · **Branch:** `week_7` · **Term:** MAY 2026
 
 ## Files
 
 | File | Utility |
 |------|---------|
-| `iris_fastapi.py` | FastAPI inference API — `GET /` health check, `POST /predict/` returns the predicted species. Loads `model.joblib`. |
-| `requirements.txt` | API dependencies (fastapi, uvicorn, scikit-learn, joblib, numpy, pandas). |
-| `Dockerfile` | **Task 2** — packages the API + model into a container on `python:3.10-slim`, exposes port 8200, runs uvicorn. |
-| `.github/workflows/cd.yml` | **Tasks 4 & 5** — CD workflow: WIF auth → `dvc pull` model → docker build → push to Artifact Registry → deploy to GKE. |
-| `k8s/deployment.yaml` | Kubernetes Deployment — 1 replica of the API container on port 8200. |
-| `k8s/service.yaml` | Kubernetes Service (LoadBalancer) — exposes port 80 → 8200 with an external IP. |
+| `demo_log.py` | FastAPI service with **structured JSON logging**, **OpenTelemetry → Cloud Trace** spans, an exception handler that attaches a `trace_id`, a latency middleware, and `/live_check` + `/ready_check` health probes. |
+| `Dockerfile` | Packages the service on `python:3.11-slim`, exposes 8200, runs uvicorn. |
+| `requirements.txt` | fastapi, uvicorn, pydantic, opentelemetry-exporter-gcp-trace. |
+| `deployment.yaml` | Deployment (2 replicas) with **liveness/readiness probes** and the `telemetry-access` service account (Workload Identity). |
+| `service.yaml` | LoadBalancer Service exposing port 80 → 8200. |
+| `hpa.yaml` | **HorizontalPodAutoscaler** — scales 2→10 pods at 60% CPU. |
+| `post.lua` | wrk load-test script for driving traffic to trigger autoscaling. |
 
-## Architecture
+## What each observability piece does
 
-```
-push to week_6
-  └─ GitHub Actions (cd.yml)
-       ├─ auth to GCP (Workload Identity Federation, keyless)
-       ├─ dvc pull model.joblib   (from Week 2 GCS remote)
-       ├─ docker build            (API + model)
-       ├─ push → Artifact Registry (us-central1-docker.pkg.dev/.../iris-repo/iris-api)
-       └─ deploy → GKE            (kubectl apply → Deployment + LoadBalancer Service)
-                                     └─ live API on the Service's external IP
-```
+- **Structured logging** — every request logs a single JSON line (severity,
+  event, trace_id, input, result, latency_ms) that Cloud Logging parses into
+  fields you can query.
+- **Tracing** — each `/predict` opens a `model_inference` span exported to Cloud
+  Trace; the same `trace_id` appears in the logs, linking logs ↔ traces.
+- **Health probes** — `readiness` gates traffic until the model is loaded;
+  `liveness` lets Kubernetes restart a hung pod.
+- **HPA** — watches CPU and adds/removes pods automatically under load.
 
-## Pod vs Container (Task 1 — explained in the screencast)
-
-- A **Docker container** is a single packaged process — the app plus its
-  dependencies and runtime, isolated from the host.
-- A **Kubernetes Pod** is the smallest deployable unit in Kubernetes and wraps
-  one or more containers that share a network namespace (same IP/port space) and
-  storage volumes.
-- Kubernetes never schedules a bare container — it always schedules a Pod.
-  Deploying via Pods lets Kubernetes add orchestration (scheduling, restarts,
-  scaling, sidecars, shared networking) that a lone container has no concept of.
-  Here, one Pod runs the single `iris-api` container.
-
-## One-time GCP setup (Task 3)
+## Setup (GKE with Workload Identity)
 
 ```bash
-# enable APIs
-gcloud services enable artifactregistry.googleapis.com container.googleapis.com
+# APIs
+gcloud services enable container.googleapis.com logging.googleapis.com \
+  monitoring.googleapis.com cloudtrace.googleapis.com
 
-# Artifact Registry repo
-gcloud artifacts repositories create iris-repo \
-  --repository-format=docker --location=us-central1
+# cluster with logging + monitoring + workload identity
+gcloud container clusters create demo-log-ml-cluster \
+  --zone us-central1-a --num-nodes 3 \
+  --disk-type pd-standard --disk-size 30 \
+  --workload-pool=$(gcloud config get-value project).svc.id.goog \
+  --logging=SYSTEM,WORKLOAD --monitoring=SYSTEM
 
-# grant the existing WIF service account the CD roles
+# GCP service account with logging + trace roles
 PROJECT_ID=$(gcloud config get-value project)
-for ROLE in roles/artifactregistry.writer roles/container.developer; do
-  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-    --member="serviceAccount:dvc-ci@$PROJECT_ID.iam.gserviceaccount.com" \
-    --role="$ROLE"
-done
+gcloud iam service-accounts create telemetry-access --display-name "GKE telemetry"
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:telemetry-access@$PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/logging.logWriter"
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:telemetry-access@$PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/cloudtrace.agent"
 
-# GKE cluster (small/zonal to conserve credits)
-gcloud container clusters create iris-cluster \
-  --zone us-central1-a --num-nodes 1 --machine-type e2-small
+# bind K8s SA <-> GCP SA (Workload Identity)
+kubectl create serviceaccount telemetry-access --namespace default
+kubectl annotate serviceaccount telemetry-access --namespace default \
+  iam.gke.io/gcp-service-account=telemetry-access@$PROJECT_ID.iam.gserviceaccount.com
+gcloud iam service-accounts add-iam-policy-binding \
+  telemetry-access@$PROJECT_ID.iam.gserviceaccount.com \
+  --role roles/iam.workloadIdentityUser \
+  --member "serviceAccount:$PROJECT_ID.svc.id.goog[default/telemetry-access]"
 ```
 
-Auth uses the same keyless Workload Identity Federation set up in Week 4 — no
-downloadable service-account key (which the trial org policy blocks).
-
-## Verify the deployment
+## Build, push, deploy
 
 ```bash
-kubectl get pods
-kubectl get service iris-api-service     # note the EXTERNAL-IP
-curl -X POST "http://<EXTERNAL-IP>/predict/" \
+gcloud auth configure-docker us-central1-docker.pkg.dev
+docker build -t demo_log .
+docker tag demo_log us-central1-docker.pkg.dev/$PROJECT_ID/iris-repo/demo_log:latest
+docker push us-central1-docker.pkg.dev/$PROJECT_ID/iris-repo/demo_log:latest
+
+kubectl apply -f deployment.yaml
+kubectl apply -f service.yaml
+kubectl apply -f hpa.yaml
+kubectl get service demo-log-ml-service   # note EXTERNAL-IP
+```
+
+## Verify
+
+```bash
+curl -X POST http://<EXTERNAL-IP>/predict \
   -H "Content-Type: application/json" \
-  -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}'
-# -> {"predicted_class":"setosa"}
+  -d '{"feature1": 1.0, "feature2": 2.0}'
+# -> {"prediction":42,"confidence":0.99}
 ```
+Then in the Console: **Logging** (see the structured JSON entries), **Trace**
+(see `model_inference` spans), **Kubernetes Engine → Workloads** (probe status),
+and drive load with wrk to watch the **HPA** add pods.
 
-## Local Docker test (optional)
-
-```bash
-dvc pull model.joblib.dvc
-docker build -t iris-api .
-docker run -d -p 8200:8200 iris-api
-curl -X POST "http://localhost:8200/predict/" -H "Content-Type: application/json" \
-  -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}'
-```
+## Note
+Fixed a bug in the starter `demo_log.py`: the health probes referenced `status`
+(e.g. `status.HTTP_500_...`) without importing it — added `status` to the
+`fastapi` import.
