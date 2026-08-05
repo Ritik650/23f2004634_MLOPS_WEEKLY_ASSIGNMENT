@@ -1,4 +1,4 @@
-google-cloud-storage
+mlflow
 scikit-learn
 pandas
-joblib
+numpy
