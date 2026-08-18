@@ -1,0 +1,6 @@
+DATA DRIFT REPORT (KS test, reference vs simulated production)
+
+sepal_length    KS=0.000  p=1  -> ok
+sepal_width     KS=0.113  p=0.2911  -> ok
+petal_length    KS=0.527  p=2.276e-19  -> DRIFT
+petal_width     KS=0.000  p=1  -> ok

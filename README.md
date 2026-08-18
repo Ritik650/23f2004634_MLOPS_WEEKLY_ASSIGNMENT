@@ -1,59 +1,45 @@
-# IRIS ML Pipeline on Vertex AI — MLOps Week 1
+# IRIS Pipeline — Explainability, Fairness & Drift (Week 9)
 
-End-to-end IRIS classification pipeline on Google Cloud. Data and artifacts are
-managed in Google Cloud Storage (GCS); training and inference are separate,
-reproducible scripts. Output artifacts are organized by execution timestamp.
+Introduces a sensitive attribute, audits fairness with **Fairlearn**, explains
+predictions with **SHAP**, detects **data drift**, and documents the model in a
+**model card** — the responsible-ML layer of the pipeline.
 
-**Roll number:** 23f2004634 · **Branch:** `week_1` · **Term:** MAY 2026
+**Roll:** 23f2004634 · **Branch:** `week_9` · **Term:** MAY 2026
 
 ## Files
-
-| File | Utility |
+| File | Purpose |
 |------|---------|
-| `config.py` | Central config (project, location, bucket, feature/target columns). Reads env vars `PROJECT_ID`, `LOCATION`, `BUCKET`. |
-| `gcs_utils.py` | Helper wrappers over `google-cloud-storage` for upload/download/list. |
-| `data_prep.py` | **Task 2** — stratified train/eval split of the IRIS data, uploaded to `gs://<bucket>/data/<version>/`. |
-| `train.py` | **Task 3** — fetches train data from GCS, trains a DecisionTree, stores `model.joblib`, `metrics.json`, `metadata.json`, `training.log` in a timestamped folder `gs://<bucket>/artifacts/<version>/<timestamp>/`. |
-| `inference.py` | **Task 4** — fetches a trained model from GCS (latest run by default) and runs inference on the eval set; writes `predictions.csv` and `eval_metrics.json` under the same run folder. |
-| `requirements.txt` | Python dependencies. |
+| `governance.py` | Tasks 1–4: adds the `location` sensitive attribute, trains on the 4 real features, runs Fairlearn MetricFrame, generates SHAP summary plots for all 3 classes, and detects data drift with a KS test. |
+| `MODEL_CARD.md` | Task 5: model card (purpose, data, per-group performance, limitations, fairness). |
+| `requirements.txt` | shap, fairlearn, scikit-learn, pandas, numpy, matplotlib, scipy. |
 
-## GCS layout
-
-```
-gs://<bucket>/
-├── data/<version>/{train.csv, eval.csv}
-└── artifacts/<version>/<YYYY-MM-DDTHH-MM-SS>/
-    ├── model.joblib
-    ├── metrics.json
-    ├── metadata.json
-    ├── training.log
-    └── inference/{predictions.csv, eval_metrics.json}
-```
+## Tasks
+- **Task 1 — sensitive attribute:** a random `location` (0/1) is added but excluded
+  from training (it's only a group identifier for auditing).
+- **Task 2 — fairness (Fairlearn MetricFrame):** accuracy/precision/recall by
+  location. Near-equal across groups (max gap ~0.014), as expected for a random
+  attribute — this is the fairness-audit skill, not bias-fixing.
+- **Task 3 — SHAP:** summary plots for setosa, versicolor, virginica. For
+  **virginica**, petal_width and petal_length dominate — high values (red) on the
+  right push toward virginica; low values (blue) on the left push away.
+- **Task 4 — drift:** production data is simulated by shifting `petal_length` +2.0.
+  A KS test flags `petal_length` as drifted (p≈0) while other features stay stable —
+  such a shift would degrade a model trained on the original distribution.
+- **Task 5 — model card:** see `MODEL_CARD.md`.
 
 ## Run
-
 ```bash
-export PROJECT_ID=project-a0a1f4bf-9c68-4b93-a84
-export BUCKET=23f2004634-mlops-week1
 pip install -r requirements.txt
-
-# Task 2 — upload data
-python data_prep.py --src ga_resources/data/raw/iris.csv --version raw
-
-# Task 3 + 4 — one full pass
-python train.py --version raw
-python inference.py --version raw
-
-# Task 5 — run twice (second timestamped folder)
-python train.py --version raw && python inference.py --version raw
-
-# Task 6 (optional) — compare data versions
-python data_prep.py --src ga_resources/data/v1/data.csv --version v1
-python train.py --version v1 && python inference.py --version v1
-python data_prep.py --src ga_resources/data/v2/data.csv --version v2
-python train.py --version v2 && python inference.py --version v2
+python governance.py
 ```
+Outputs: `shap_summary_{setosa,versicolor,virginica}.png`, `drift_petal_length.png`,
+`fairness_report.txt`, `drift_report.txt`.
 
-## Notes
-- Models, data splits, and the video screencast are **not** committed (see `.gitignore`); they live in GCS.
-- Each training run produces an independent timestamped folder for traceability.
+## Concepts (for the screencast)
+- **Explainability vs interpretability:** SHAP explains any black-box post-hoc;
+  interpretability is built-in (e.g. a shallow tree).
+- **Data drift vs concept drift:** data drift = input distribution changes
+  (detectable statistically, e.g. KS test); concept drift = the input→label
+  relationship changes (needs ground-truth performance monitoring).
+- **Proxy discrimination:** excluding a sensitive attribute doesn't guarantee
+  fairness if other features correlate with it.

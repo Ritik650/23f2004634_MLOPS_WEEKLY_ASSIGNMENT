@@ -1,4 +1,7 @@
-google-cloud-storage
+shap
+fairlearn
 scikit-learn
 pandas
-joblib
+numpy
+matplotlib
+scipy
